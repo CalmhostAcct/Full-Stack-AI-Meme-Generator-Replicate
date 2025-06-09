@@ -6,8 +6,8 @@
 
 ## Features
 
-- Uses OpenAI's GPT-4 to generate the text and image prompt for the meme.
-- Automatically sends image prompt request to an AI image generator of choice, then combines the text and image
+- Uses models hosted on [Replicate](https://replicate.com) to generate the meme text and images.
+- Combines the generated text and image into a final meme
 - Allows customization of the meme generation process through various settings.
 - Generates memes with a user-provided subject or concept, or you can let the AI decide.
 - Logs meme generation details for future reference.
@@ -15,7 +15,7 @@
 ## Usage
 
 1. For Python Version Only: Clone the repository & Install the necessary packages.
-2. Obtain at least an OpenAI API key, but it is recommended to also use APIs from Clipdrop or Stability AI (DreamStudio) for the image generation stage.
+2. Obtain a Replicate API token from <https://replicate.com/account>.
 3. Edit the settings variables in the settings.ini file.
 4. Run the script and enter a meme subject or concept when prompted (optional).
 
@@ -23,8 +23,8 @@
 
 Various settings for the meme generation process can be customized:
 
-- OpenAI API settings: Choose the text model and temperature for generating the meme text and image prompt.
-- Image platform settings: Choose the platform for generating the meme image. Options include OpenAI's DALLE2, StabilityAI's DreamStudio, and ClipDrop.
+- Replicate model settings: Choose the text model and temperature for generating the meme text and image prompt.
+- Image model settings: Choose the model on Replicate to generate the meme image.
 - Basic Meme Instructions: You can tell the AI about the general style or qualities to apply to all memes, such as using dark humor, surreal humor, wholesome, etc. 
 - Special Image Instructions: You can tell the AI how to generate the image itself (more specifically,  how to write the image prompt). You can specify a style such as being a photograph, drawing, etc, or something more specific such as always using cats in the pictures.
 
@@ -44,12 +44,8 @@ Image Generation Platform: clipdrop
 ## Optional Arguments
 ### You can also pass options into the program via command-line arguments whether using the python version or exe version.
 
-#### • API Key Arguments: Not necessary if the keys are already in api_keys.ini
-`--openaikey`: OpenAI API key.
-
-`--clipdropkey`: ClipDrop API key.
-
-`--stabilitykey`: Stability AI API key.
+#### • API Key Arguments: Not necessary if the key is already in api_keys.ini
+`--replicatekey`: Replicate API token.
 
 #### • Basic Meme Arguments
 
@@ -59,7 +55,7 @@ Image Generation Platform: clipdrop
 
 #### • Advanced Meme Settings Arguments
 
-`--imageplatform`: The image platform to use. If using arguments and not specified, the default is 'clipdrop'. Possible options: 'openai', 'stability', 'clipdrop'.
+`--imagemodel`: The image model to use on Replicate. If not specified, the default is 'stability-ai/sdxl'.
 
 `--temperature`: The temperature to use for the chat bot. If using arguments and not specified, the default is 1.0.
 
