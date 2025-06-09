@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # AI Meme Generator
-# Creates start-to-finish memes using various AI service APIs. OpenAI's chatGPT to generate the meme text and image prompt, and several optional image generators for the meme picture. Then combines the meme text and image into a meme using Pillow.
+# Creates memes end-to-end using models hosted on Replicate to generate the meme text and image prompt. The image and text are then combined using Pillow.
 # Author: ThioJoe
 # Project Page: https://github.com/ThioJoe/Full-Stack-AI-Meme-Generator
 version = "1.0.5"
 
 # Import installed libraries
-import openai
-from stability_sdk import client
-import stability_sdk.interfaces.gooseai.generation.generation_pb2 as generation
+import replicate
 from PIL import Image, ImageDraw, ImageFont
 import requests
 
@@ -35,12 +33,9 @@ import traceback
 # =============================================== Argument Parser ================================================
 # Parse the arguments at the start of the script
 parser = argparse.ArgumentParser()
-parser.add_argument("--openaikey", help="OpenAI API key")
-parser.add_argument("--clipdropkey", help="ClipDrop API key")
-parser.add_argument("--stabilitykey", help="Stability AI API key")
+parser.add_argument("--replicatekey", help="Replicate API token")
 parser.add_argument("--userprompt", help="A meme subject or concept to send to the chat bot. If not specified, the user will be prompted to enter a subject or concept.")
 parser.add_argument("--memecount", help="The number of memes to create. If using arguments and not specified, the default is 1.")
-parser.add_argument("--imageplatform", help="The image platform to use. If using arguments and not specified, the default is 'clipdrop'. Possible options: 'openai', 'stability', 'clipdrop'")
 parser.add_argument("--temperature", help="The temperature to use for the chat bot. If using arguments and not specified, the default is 1.0")
 parser.add_argument("--basicinstructions", help=f"The basic instructions to use for the chat bot. If using arguments and not specified, default will be used.")
 parser.add_argument("--imagespecialinstructions", help=f"The image special instructions to use for the chat bot. If using arguments and not specified, default will be used")
@@ -50,7 +45,7 @@ parser.add_argument("--nofilesave", action='store_true', help="If specified, the
 args = parser.parse_args()
 
 # Create a namedtuple classes
-ApiKeysTupleClass = namedtuple('ApiKeysTupleClass', ['openai_key', 'clipdrop_key', 'stability_key'])
+ApiKeysTupleClass = namedtuple('ApiKeysTupleClass', ['replicate_key'])
 
 # Create custom exceptions
 class NoFontFileError(Exception):
@@ -61,28 +56,11 @@ class NoFontFileError(Exception):
         self.font_file = font_file
         self.simple_message = message
         
-class MissingOpenAIKeyError(Exception):
+class MissingReplicateKeyError(Exception):
     def __init__(self, message):
-        full_error_message = f"No OpenAI API key found. OpenAI API key is required - In order to generate text for the meme text and image prompt. Please add your OpenAI API key to the api_keys.ini file."
-        
-        super().__init__(full_error_message)
-        self.simple_message = message    
-        
-class MissingAPIKeyError(Exception):
-    def __init__(self, message, api_platform):
-        full_error_message = f"{api_platform} was set as the image platform, but no {api_platform} API key was found in the api_keys.ini file."
-        
-        super().__init__(full_error_message)
-        self.api_platform = api_platform
-        self.simple_message = message
+        full_error_message = "No Replicate API token found. Please add your Replicate token to the api_keys.ini file."
 
-class InvalidImagePlatformError(Exception):
-    def __init__(self, message, given_platform, valid_platforms):
-        full_error_message = f"Invalid image platform '{given_platform}'. Valid image platforms are: {valid_platforms}"
-        
         super().__init__(full_error_message)
-        self.given_platform = given_platform
-        self.valid_platforms = valid_platforms
         self.simple_message = message
 
 # ==============================================================================================
@@ -226,62 +204,29 @@ def get_api_keys(api_key_filename="api_keys.ini", args=None):
     # Run check for api_keys.ini file
     check_api_key_file()
     
-    # Default values
-    openai_key, clipdrop_key, stability_key = '', '', ''
+    replicate_key = ''
 
-    # Try to read keys from config file. Default value of '' will be used if not found
     try:
         keys_dict = get_config(api_key_filename)
-        openai_key = keys_dict.get('OpenAI', '')
-        clipdrop_key = keys_dict.get('ClipDrop', '')
-        stability_key = keys_dict.get('StabilityAI', '')
+        replicate_key = keys_dict.get('Replicate', '')
     except FileNotFoundError:
-        print("Config not found, checking for command line arguments.")  # Could not read from config file, will try command-line arguments next
+        print("Config not found, checking for command line arguments.")
 
-    # Checks if any arguments are not None, and uses those values if so
     if not all(value is None for value in vars(args).values()):
-        openai_key = args.openaikey if args.openaikey else openai_key
-        clipdrop_key = args.clipdropkey if args.clipdropkey else clipdrop_key
-        stability_key = args.stabilitykey if args.stabilitykey else stability_key
+        replicate_key = args.replicatekey if args.replicatekey else replicate_key
 
-    return ApiKeysTupleClass(openai_key, clipdrop_key, stability_key)
+    return ApiKeysTupleClass(replicate_key)
 
 # ------------ VALIDATION ------------
 
-def validate_api_keys(apiKeys, image_platform):
-    if not apiKeys.openai_key:
-        raise MissingOpenAIKeyError("No OpenAI API key found.")
+def validate_api_keys(apiKeys):
+    if not apiKeys.replicate_key:
+        raise MissingReplicateKeyError("No Replicate API token found.")
 
-    valid_image_platforms = ["openai", "stability", "clipdrop"]
-    image_platform = image_platform.lower()
+def initialize_api_clients(apiKeys):
+    replicate_client = replicate.Client(api_token=apiKeys.replicate_key) if apiKeys.replicate_key else replicate.Client()
 
-    if image_platform in valid_image_platforms:
-        if image_platform == "stability" and not apiKeys.stability_key:
-            raise MissingAPIKeyError("No Stability AI API key found.", "Stability AI")
-
-        if image_platform == "clipdrop" and not apiKeys.clipdrop_key:
-            raise MissingAPIKeyError("No ClipDrop API key found.", "ClipDrop")
-
-    else:
-        raise InvalidImagePlatformError(f'Invalid image platform provided.', image_platform, valid_image_platforms)
-
-def initialize_api_clients(apiKeys, image_platform):
-    if apiKeys.openai_key:
-        openai_api = openai.OpenAI(api_key=apiKeys.openai_key)
-
-    if apiKeys.stability_key and image_platform == "stability":
-        stability_api = client.StabilityInference(
-            key=apiKeys.stability_key, # API Key reference.
-            verbose=True, # Print debug messages.
-            engine="stable-diffusion-xl-1024-v0-9", # Set the engine to use for generation.
-            # Available engines: stable-diffusion-xl-1024-v0-9 stable-diffusion-v1 stable-diffusion-v1-5 stable-diffusion-512-v2-0 stable-diffusion-768-v2-0
-            # stable-diffusion-512-v2-1 stable-diffusion-768-v2-1 stable-diffusion-xl-beta-v2-2-2 stable-inpainting-v1-0 stable-inpainting-512-v2-0
-        )
-    else:
-        stability_api = None
-    
-    # Only need to return stability_api because openai.api_key has global scope
-    return stability_api, openai_api
+    return replicate_client
 
 
 # =============================================== Functions ================================================
@@ -453,19 +398,21 @@ def parse_meme(message):
         return None
     
 # Sends the user message to the chat bot and returns the chat bot's response
-def send_and_receive_message(openai_api, text_model, userMessage, conversationTemp, temperature=0.5):
-    # Prepare to send request along with context by appending user message to previous conversation
+def send_and_receive_message(rep_client, text_model, userMessage, conversationTemp, temperature=0.5):
     conversationTemp.append({"role": "user", "content": userMessage})
-    
-    print("Sending request to write meme...")
-    chatResponse = openai_api.chat.completions.create(
-        model=text_model,
-        messages=conversationTemp,
-        temperature=temperature
-        )
 
-    chatResponseMessage = chatResponse.choices[0].message.content
-    chatResponseRole = chatResponse.choices[0].message.role
+    print("Sending request to write meme...")
+
+    prompt = "\n".join([m["content"] for m in conversationTemp])
+    output = rep_client.run(
+        text_model,
+        input={"prompt": prompt, "temperature": temperature}
+    )
+
+    if isinstance(output, str):
+        chatResponseMessage = output
+    else:
+        chatResponseMessage = "".join([str(x) for x in output])
 
     return chatResponseMessage
 
@@ -536,74 +483,30 @@ def create_meme(image_path, top_text, filePath, fontFile, noFileSave=False, min_
     new_img.save(virtualMemeFile, format="PNG")
     
     return virtualMemeFile
-    
 
-def image_generation_request(apiKeys, image_prompt, platform, openai_api, stability_api=None):
-    if platform == "openai":
-        openai_response = openai_api.images.generate(model="dall-e-3", prompt=image_prompt, n=1, size="1024x1024", response_format="b64_json")
-        # Convert image data to virtual file
-        image_data = b64decode(openai_response.data[0].model_dump()["b64_json"])
-        virtual_image_file = io.BytesIO()
-        # Write the image data to the virtual file
-        virtual_image_file.write(image_data)
-    
-    if platform == "stability" and stability_api:
-        # Set up our initial generation parameters.
-        stability_response = stability_api.generate(
-            prompt=image_prompt,
-            #seed=992446758, # If a seed is provided, the resulting generated image will be deterministic.
-            steps=30,       # Amount of inference steps performed on image generation. Defaults to 30.
-            cfg_scale=7.0,  # Influences how strongly your generation is guided to match your prompt. Setting this value higher increases the strength in which it tries to match your prompt. Defaults to 7.0 if not specified.
-            width=1024, # Generation width, if not included defaults to 512 or 1024 depending on the engine.
-            height=1024, # Generation height, if not included defaults to 512 or 1024 depending on the engine.
-            samples=1, # Number of images to generate, defaults to 1 if not included.
-            sampler=generation.SAMPLER_K_DPMPP_2M   # Choose which sampler we want to denoise our generation with. Defaults to k_dpmpp_2m if not specified. Clip Guidance only supports ancestral samplers.
-                                                    # (Available Samplers: ddim, plms, k_euler, k_euler_ancestral, k_heun, k_dpm_2, k_dpm_2_ancestral, k_dpmpp_2s_ancestral, k_lms, k_dpmpp_2m, k_dpmpp_sde)
-        )
-
-        # Set up our warning to print to the console if the adult content classifier is tripped. If adult content classifier is not tripped, save generated images.
-        for resp in stability_response:
-            for artifact in resp.artifacts:
-                if artifact.finish_reason == generation.FILTER:
-                    warnings.warn(
-                        "Your request activated the API's safety filters and could not be processed."
-                        "Please modify the prompt and try again.")
-                if artifact.type == generation.ARTIFACT_IMAGE:
-                    #img = Image.open(io.BytesIO(artifact.binary))
-                    #img.save(str(artifact.seed)+ ".png") # Save our generated images with their seed number as the filename.
-                    virtual_image_file = io.BytesIO(artifact.binary)
-
-    if platform == "clipdrop":
-        r = requests.post('https://clipdrop-api.co/text-to-image/v1',
-            files = {
-                'prompt': (None, image_prompt, 'text/plain')
-            },
-            headers = { 'x-api-key': apiKeys.clipdrop_key}
-        )
-        if (r.ok):
-            virtual_image_file = io.BytesIO(r.content) # r.content contains the bytes of the returned image
-        else:
-            r.raise_for_status()
-
+def image_generation_request(rep_client, image_model, image_prompt):
+    output = rep_client.run(image_model, input={"prompt": image_prompt})
+    file_output = output[0] if isinstance(output, list) else output
+    virtual_image_file = io.BytesIO(file_output.read())
     return virtual_image_file
+    
+
 
 # ==================== RUN ====================
 
 # Set default values for parameters to those at top of script, but can be overridden by command line arguments or by being set when called from another script
 def generate(
-    text_model="gpt-4",
+    text_model="meta/meta-llama-3-70b-instruct",
+    image_model="stability-ai/sdxl",
     temperature=1.0,
     basic_instructions=r'You will create funny memes that are clever and original, and not cliche or lame.',
     image_special_instructions=r'The images should be photographic.',
     user_entered_prompt="anything",
     meme_count=1,
-    image_platform="openai",
     font_file="arial.ttf",
     base_file_name="meme",
     output_folder="Outputs",
-    openai_key=None,
-    stability_key=None,
-    clipdrop_key=None,
+    replicate_key=None,
     noUserInput=False,
     noFileSave=False,
     release_channel="all"
@@ -617,7 +520,7 @@ def generate(
         temperature = float(settings.get('Temperature', temperature))
         basic_instructions = settings.get('Basic_Instructions', basic_instructions)
         image_special_instructions = settings.get('Image_Special_Instructions', image_special_instructions)
-        image_platform = settings.get('Image_Platform', image_platform)
+        image_model = settings.get('Image_Model', image_model)
         font_file = settings.get('Font_File', font_file)
         base_file_name = settings.get('Base_File_Name', base_file_name)
         output_folder = settings.get('Output_Folder', output_folder)
@@ -626,20 +529,16 @@ def generate(
     # Parse the arguments
     args = parser.parse_args()
 
-    # If API Keys not provided as parameters, get them from config file or command line arguments
-    if not openai_key:
+    # If API token not provided as parameter, get from config file or command line arguments
+    if not replicate_key:
         apiKeys = get_api_keys(args=args)
     else:
-        apiKeys = ApiKeysTupleClass(openai_key, clipdrop_key, stability_key)
-        
-    # Validate api keys
-    validate_api_keys(apiKeys, image_platform)
-    # Initialize api clients
-    stability_api, openai_api = initialize_api_clients(apiKeys, image_platform)
+        apiKeys = ApiKeysTupleClass(replicate_key)
+
+    validate_api_keys(apiKeys)
+    replicate_client = initialize_api_clients(apiKeys)
 
     # Check if any settings arguments, and replace the default values with the args if so. To run automated from command line, specify at least 1 argument.
-    if args.imageplatform:
-        image_platform = args.imageplatform
     if args.temperature:
         temperature = float(args.temperature)
     if args.basicinstructions:
@@ -707,7 +606,7 @@ def generate(
 
     def single_meme_generation_loop():
         # Send request to chat bot to generate meme text and image prompt
-        chatResponse = send_and_receive_message(openai_api, text_model, userEnteredPrompt, conversation, temperature)
+        chatResponse = send_and_receive_message(replicate_client, text_model, userEnteredPrompt, conversation, temperature)
 
         # Take chat message and convert to dictionary with meme_text and image_prompt
         memeDict = parse_meme(chatResponse)
@@ -720,14 +619,14 @@ def generate(
 
         # Send image prompt to image generator and get image back (Using DALL·E API)
         print("\nSending image creation request...")
-        virtual_image_file = image_generation_request(apiKeys, image_prompt, image_platform, openai_api, stability_api)
+        virtual_image_file = image_generation_request(replicate_client, image_model, image_prompt)
 
         # Combine the meme text and image into a meme
         filePath,fileName = set_file_path(base_file_name, output_folder)
         virtualMemeFile = create_meme(virtual_image_file, meme_text, filePath, noFileSave=noFileSave,fontFile=font_file)
         if not noFileSave:
             # Write the user message, meme text, and image prompt to a log file
-            write_log_file(userEnteredPrompt, memeDict, filePath, output_folder, basic_instructions, image_special_instructions, image_platform)
+            write_log_file(userEnteredPrompt, memeDict, filePath, output_folder, basic_instructions, image_special_instructions, image_model)
         
         absoluteFilePath = os.path.abspath(filePath)
         
@@ -754,31 +653,14 @@ def generate(
         if not noUserInput:
             input("\nPress Enter to exit...")
     
-    except MissingOpenAIKeyError as ox:
+    except MissingReplicateKeyError as ox:
         print(f"\n  ERROR:  {ox}")
         if not noUserInput:
             input("\nPress Enter to exit...")
         sys.exit()
-        
-    except MissingAPIKeyError as ax:
-        print(f"\n  ERROR:  {ax}")
-        if not noUserInput:
-            input("\nPress Enter to exit...")
-        sys.exit()
-        
-    #except openai.error.InvalidRequestError as irx:
-    except openai.NotFoundError as nfx:
-        print(f"\n  ERROR:  {nfx}")
-        if "The model" in str(nfx) and "does not exist" in str(nfx):
-            #if 'gpt-4' in str(irx):
-            if str(nfx) == "The model `gpt-4` does not exist":
-                print("  (!) Note: This error actually means you do not have access to the GPT-4 model yet.")
-                print("  (!)       - You can see more about the current GPT-4 requirements here: https://help.openai.com/en/articles/7102672-how-can-i-access-gpt-4")
-                print("  (!)       - Also ensure your country is supported: https://platform.openai.com/docs/supported-countries")
-                print("  (!)       - You can try the 'gpt-3.5-turbo' model instead. See more here: https://platform.openai.com/docs/models/overview)")
-            else:
-                print("   > Either the model name is incorrect, or you do not have access to it.")
-                print("   > See this page to see the model names to use in the API: https://platform.openai.com/docs/models/overview")
+
+    except replicate.exceptions.ModelError as mx:
+        print(f"\n  ERROR:  {mx}")
         if not noUserInput:
             input("\nPress Enter to exit...")
         sys.exit()
